@@ -1,19 +1,22 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Neon Bay Nights — an open-world crime story</title>
+<title>Cinder Bay Nights — open-world crime game</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e14; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  html, body { margin: 0; padding: 0; background: #0c0e14; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; font-family: sans-serif; }
+  #wrap { text-align: center; }
+  canvas { background: #1a1030; max-width: 96vw; max-height: 92vh; image-rendering: auto; }
+  #hint { color: #8a93a6; font-size: 13px; margin-top: 8px; }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="Neon Bay Nights: drive, steal cars, run six missions and lose the police in a harbour city"></canvas>
-<p id="status" role="status" aria-live="polite"></p>
+<div id="wrap">
+  <canvas id="game" width="960" height="640"></canvas>
+  <div id="hint">WASD move / drive &nbsp;·&nbsp; E enter or steal a car &nbsp;·&nbsp; mouse aim, click / Space shoot &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
+</div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
