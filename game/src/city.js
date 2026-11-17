@@ -1,156 +1,245 @@
-// Neon Bay: a fictional harbour city on a road grid. Vertical and horizontal
-// roads cross the map; the blocks between them hold buildings, parks and car
-// parks, and the south edge is the bay with a pier. Nothing here is a real
-// place, a real person or a real organisation.
-import { clamp } from './rng.js';
+// Neon Bay: a fictional harbour city drawn on a road grid. Everything in the
+// world is placed against this grid — roads, blocks, buildings, lamps, parks and
+// the mission landmarks — so traffic, pedestrians and the police can all share
+// one simple rule: stay on the roads, walk on the pavements, never drive through
+// a building. The layout is fixed by design; only the dressing (building
+// colours, heights, trees, parked cars) is rolled from the seed.
+import { intRange, pick, range } from './rng.js';
 
-export const WORLD_W = 3600;
-export const WORLD_H = 2600;
-export const ROAD_W = 110;
-export const SIDEWALK = 16;
+export const WORLD = { width: 2560, height: 1920 };
 
-export const ROADS_V = [300, 900, 1500, 2100, 2700, 3300];
-export const ROADS_H = [300, 800, 1300, 1800, 2300];
+// The avenues run north-south, the streets east-west. Every crossing is an
+// intersection traffic and missions can aim at.
+export const AVENUES = [320, 800, 1280, 1760, 2240];
+export const STREETS = [300, 700, 1100, 1500];
+export const ROAD_WIDTH = 104;
+export const WALK_WIDTH = 26;
 
-export const DISTRICTS = [
-  { name: 'Harbourfront', x: 0, y: 2100, w: 3600, h: 500 },
-  { name: 'Old Mill Quarter', x: 0, y: 0, w: 1200, h: 1000 },
-  { name: 'Downtown Neon', x: 1200, y: 600, w: 1500, h: 900 },
-  { name: 'Palm Court', x: 2400, y: 0, w: 1200, h: 1000 },
-  { name: 'Junction Yards', x: 1200, y: 1500, w: 1500, h: 600 },
+export const LANDMARKS = {
+  // The docks sit on the south-west pier, past the last street.
+  docks: { x: 320, y: 1720, label: 'Harbor Docks' },
+  // The bank anchors the middle of town.
+  bank: { x: 1280, y: 700, label: 'Neon Bay Bank' },
+  // City hall crowns the north-east quarter.
+  cityHall: { x: 1760, y: 300, label: 'City Hall' },
+  // The safehouse is a quiet flat on a middle street.
+  safehouse: { x: 800, y: 1100, label: 'Safehouse' },
+  // The courier runs the long road down to the pier.
+  pierGate: { x: 320, y: 1500, label: 'Pier Gate' },
+  // A market square in the south-east for the rush deliveries.
+  market: { x: 2240, y: 1500, label: 'Night Market' },
+};
+
+const BUILDING_COLORS = [
+  '#3d4a63', '#4a3f5e', '#54423a', '#2f4a44', '#4c4a35',
+  '#5a3a4a', '#37455c', '#4a5540', '#5c4632', '#413654',
 ];
+const ROOF_COLORS = ['#232b3a', '#2c2530', '#2a2f28', '#33241f', '#26303a'];
 
-// Build the static city: buildings, parks, trees, parking lots and the
-// named story spots. Seeded, so the same seed builds the same city.
-export function buildCity(rng) {
-  const buildings = [];
-  const parks = [];
-  const trees = [];
-  const lots = [];
-  const palette = ['#c96f5a', '#5a7dc9', '#c9a45a', '#6fc98a', '#9a6fc9', '#c95a8a', '#5ac9c2', '#b0b6c0', '#d97b4f', '#7d9b57'];
-  for (let vi = 0; vi < ROADS_V.length - 1; vi++) {
-    for (let hi = 0; hi < ROADS_H.length - 1; hi++) {
-      const x0 = ROADS_V[vi] + ROAD_W / 2 + SIDEWALK + 14;
-      const x1 = ROADS_V[vi + 1] - ROAD_W / 2 - SIDEWALK - 14;
-      const y0 = ROADS_H[hi] + ROAD_W / 2 + SIDEWALK + 14;
-      const y1 = ROADS_H[hi + 1] - ROAD_W / 2 - SIDEWALK - 14;
-      if (x1 - x0 < 120 || y1 - y0 < 120) continue;
-      const roll = rng.next();
-      if (roll < 0.22) {
-        parks.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
-        const n = Math.floor(rng.range(4, 9));
-        for (let i = 0; i < n; i++) {
-          trees.push({ x: rng.range(x0 + 20, x1 - 20), y: rng.range(y0 + 20, y1 - 20), r: rng.range(9, 16) });
-        }
-        continue;
-      }
-      if (roll < 0.32) {
-        lots.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
-        continue;
-      }
-      // One or two buildings per block, with a gap between them.
-      const split = rng.chance(0.55);
-      const pieces = split
-        ? [
-          { x: x0, y: y0, w: (x1 - x0) * 0.46, h: y1 - y0 },
-          { x: x0 + (x1 - x0) * 0.54, y: y0, w: (x1 - x0) * 0.46, h: y1 - y0 },
-        ]
-        : [{ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }];
-      for (const s of pieces) {
-        const w = Math.max(70, s.w * rng.range(0.6, 0.92));
-        const h = Math.max(60, s.h * rng.range(0.55, 0.9));
-        buildings.push({
-          x: s.x + (s.w - w) / 2,
-          y: s.y + (s.h - h) / 2,
-          w, h,
-          color: rng.pick(palette),
-          roof: rng.pick(['#3c4250', '#4a3c34', '#2f3a44', '#54423a']),
-          stories: rng.int(1, 6),
-          lit: rng.next(),
-        });
-      }
-    }
-  }
-  return { buildings, parks, trees, lots };
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-// Manhattan routing over the road grid: first reach a vertical road, then a
-// horizontal one, so a driver never cuts diagonally through buildings.
-// Used by the screenshot autopilot and by police pursuit.
-export function roadWaypoint(x, y, tx, ty) {
-  const nearest = (list, v) => list.reduce((a, b) => (Math.abs(b - v) < Math.abs(a - v) ? b : a));
-  const vx = nearest(ROADS_V, x);
-  const hy = nearest(ROADS_H, ty);
-  if (Math.abs(y - hy) > 70) {
-    if (Math.abs(x - vx) > 40) return { x: vx, y: nearest(ROADS_H, y) };
-    return { x: vx, y: hy };
-  }
-  if (Math.abs(x - tx) > 70) return { x: tx, y: hy };
-  return { x: tx, y: ty };
-}
-
+// Is this point on tarmac (a road), rather than a block?
 export function onRoad(x, y) {
-  for (const rx of ROADS_V) if (Math.abs(x - rx) < ROAD_W / 2) return true;
-  for (const ry of ROADS_H) if (Math.abs(y - ry) < ROAD_W / 2) return true;
+  const half = ROAD_WIDTH / 2;
+  for (const ax of AVENUES) if (Math.abs(x - ax) <= half) return true;
+  for (const sy of STREETS) if (Math.abs(y - sy) <= half) return true;
   return false;
 }
 
+// The closest point that sits on a road, for steering lost cars back to tarmac.
 export function nearestRoadPoint(x, y) {
+  let bestX = AVENUES[0];
+  for (const ax of AVENUES) if (Math.abs(ax - x) < Math.abs(bestX - x)) bestX = ax;
+  let bestY = STREETS[0];
+  for (const sy of STREETS) if (Math.abs(sy - y) < Math.abs(bestY - y)) bestY = sy;
+  if (Math.abs(bestX - x) <= Math.abs(bestY - y)) return { x: bestX, y };
+  return { x, y: bestY };
+}
+
+// The closest intersection to a point.
+export function nearestIntersection(x, y) {
   let best = null;
-  let bd = Infinity;
-  for (const rx of ROADS_V) {
-    const d = Math.abs(x - rx);
-    if (d < bd) { bd = d; best = { x: rx, y: clamp(y, 60, WORLD_H - 60), vertical: true }; }
-  }
-  for (const ry of ROADS_H) {
-    const d = Math.abs(y - ry);
-    if (d < bd) { bd = d; best = { x: clamp(x, 60, WORLD_W - 60), y: ry, vertical: false }; }
+  let bestD = Infinity;
+  for (const ax of AVENUES) {
+    for (const sy of STREETS) {
+      const d = (ax - x) * (ax - x) + (sy - y) * (sy - y);
+      if (d < bestD) { bestD = d; best = { x: ax, y: sy }; }
+    }
   }
   return best;
 }
 
-// Circle vs building rectangles: push the circle out, report whether it hit.
-export function collideBuildings(buildings, x, y, r) {
-  let hit = false;
-  for (const b of buildings) {
-    const cx = clamp(x, b.x, b.x + b.w);
-    const cy = clamp(y, b.y, b.y + b.h);
-    const dx = x - cx;
-    const dy = y - cy;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < r * r) {
-      hit = true;
-      if (d2 > 0.01) {
-        const d = Math.sqrt(d2);
-        x = cx + (dx / d) * r;
-        y = cy + (dy / d) * r;
-      } else {
-        x += r;
+// A random intersection, optionally not the one given.
+export function randomIntersection(random, avoid) {
+  const ax = pick(random, AVENUES);
+  const sy = pick(random, STREETS);
+  if (avoid && ax === avoid.x && sy === avoid.y) return randomIntersection(random, avoid);
+  return { x: ax, y: sy };
+}
+
+// A random point on a road (used for pickups and parked cars).
+export function randomRoadPoint(random) {
+  if (random() < 0.5) {
+    const ax = pick(random, AVENUES);
+    return { x: ax + range(random, -ROAD_WIDTH / 2 + 18, ROAD_WIDTH / 2 - 18), y: range(random, 120, WORLD.height - 120) };
+  }
+  const sy = pick(random, STREETS);
+  return { x: range(random, 120, WORLD.width - 120), y: sy + range(random, -ROAD_WIDTH / 2 + 18, ROAD_WIDTH / 2 - 18) };
+}
+
+// Keep a point inside the world with a small margin.
+export function clampWorld(x, y, margin) {
+  return {
+    x: Math.max(margin, Math.min(WORLD.width - margin, x)),
+    y: Math.max(margin, Math.min(WORLD.height - margin, y)),
+  };
+}
+
+// Build the city dressing from the seed: buildings fill every block between the
+// roads, lamps line the crossings, trees dot the pavements, and a few parks
+// break up the concrete.
+export function buildCity(random) {
+  const buildings = [];
+  const lamps = [];
+  const trees = [];
+  const parks = [];
+
+  for (let ai = 0; ai < AVENUES.length - 1; ai += 1) {
+    for (let si = 0; si < STREETS.length - 1; si += 1) {
+      const left = AVENUES[ai] + ROAD_WIDTH / 2 + WALK_WIDTH;
+      const right = AVENUES[ai + 1] - ROAD_WIDTH / 2 - WALK_WIDTH;
+      const top = STREETS[si] + ROAD_WIDTH / 2 + WALK_WIDTH;
+      const bottom = STREETS[si + 1] - ROAD_WIDTH / 2 - WALK_WIDTH;
+      const blockW = right - left;
+      const blockH = bottom - top;
+      // One block in five is a park instead of buildings.
+      if (random() < 0.18) {
+        parks.push({ x: left, y: top, w: blockW, h: blockH });
+        for (let t = 0; t < 6; t += 1) {
+          trees.push({ x: range(random, left + 20, right - 20), y: range(random, top + 20, bottom - 20), r: range(random, 9, 15) });
+        }
+        continue;
+      }
+      // Split the block into two or three buildings.
+      const vertical = blockW > blockH;
+      const cuts = intRange(random, 1, 2);
+      for (let c = 0; c <= cuts; c += 1) {
+        let b;
+        if (vertical) {
+          const w = blockW / (cuts + 1) - 14;
+          b = { x: left + (c * blockW) / (cuts + 1) + 7, y: top + 7, w, h: blockH - 14 };
+        } else {
+          const h = blockH / (cuts + 1) - 14;
+          b = { x: left + 7, y: top + (c * blockH) / (cuts + 1) + 7, w: blockW - 14, h };
+        }
+        b.color = pick(random, BUILDING_COLORS);
+        b.roof = pick(random, ROOF_COLORS);
+        b.height = intRange(random, 1, 4);
+        b.windows = random() < 0.7;
+        buildings.push(b);
+      }
+      for (let t = 0; t < 2; t += 1) {
+        trees.push({ x: range(random, left, right), y: range(random, top, bottom), r: range(random, 8, 13) });
       }
     }
   }
-  return { x, y, hit };
-}
 
-export function insideBuilding(buildings, x, y) {
-  for (const b of buildings) {
-    if (x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) return true;
+  // Lamps at every intersection corner and along the long roads.
+  for (const ax of AVENUES) {
+    for (const sy of STREETS) {
+      lamps.push({ x: ax - ROAD_WIDTH / 2 - 8, y: sy - ROAD_WIDTH / 2 - 8 });
+      lamps.push({ x: ax + ROAD_WIDTH / 2 + 8, y: sy + ROAD_WIDTH / 2 + 8 });
+    }
   }
-  return false;
+  for (let x = 200; x < WORLD.width; x += 320) lamps.push({ x, y: 1500 - ROAD_WIDTH / 2 - 8 });
+
+  // The pier: a strip of wooden boards south of the last street, with crates.
+  const pier = { x: 120, y: 1660, w: 420, h: 220 };
+  const crates = [];
+  for (let i = 0; i < 10; i += 1) {
+    crates.push({ x: range(random, pier.x + 16, pier.x + pier.w - 40), y: range(random, pier.y + 16, pier.y + pier.h - 40), s: range(random, 18, 30) });
+  }
+
+  return { buildings, lamps, trees, parks, pier, crates };
 }
 
-// Named story spots, all invented for this game.
-export const SPOTS = {
-  pier: { x: 1500, y: 2440, label: 'Neon Pier' },
-  warehouse: { x: 3300, y: 800, label: 'Harbour Warehouse' },
-  garage: { x: 300, y: 1800, label: 'Rusty Anchor Garage' },
-  bank: { x: 2100, y: 1300, label: 'Bay Trust Bank' },
-  diner: { x: 900, y: 1300, label: 'Sunset Diner' },
-  casino: { x: 2700, y: 300, label: 'Golden Gull Casino' },
-  hospital: { x: 900, y: 300, label: 'St. Marina Hospital' },
-  dropA: { x: 2700, y: 1800, label: 'Drop-off: Palm Court' },
-  dropB: { x: 300, y: 800, label: 'Drop-off: Old Mill' },
-  deal: { x: 2100, y: 2300, label: 'Deal under the overpass' },
-  cityhall: { x: 1500, y: 800, label: 'Neon Bay City Hall' },
-  marina: { x: 2700, y: 2300, label: 'Marina Slip 9' },
-};
+// Push a circle (a person or a car centre) out of every building it overlaps.
+// Returns true when a push happened.
+export function resolveBuildingCollision(buildings, body, radius) {
+  let hit = false;
+  for (const b of buildings) {
+    const cx = Math.max(b.x, Math.min(body.x, b.x + b.w));
+    const cy = Math.max(b.y, Math.min(body.y, b.y + b.h));
+    const dx = body.x - cx;
+    const dy = body.y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= radius * radius) continue;
+    hit = true;
+    if (d2 > 0.0001) {
+      const d = Math.sqrt(d2);
+      body.x = cx + (dx / d) * radius;
+      body.y = cy + (dy / d) * radius;
+    } else {
+      body.x = b.x - radius;
+    }
+  }
+  return hit;
+}
+
+// Keep the pier crates solid too (small squares).
+export function resolveCrateCollision(crates, body, radius) {
+  let hit = false;
+  for (const c of crates) {
+    const cx = Math.max(c.x, Math.min(body.x, c.x + c.s));
+    const cy = Math.max(c.y, Math.min(body.y, c.y + c.s));
+    const dx = body.x - cx;
+    const dy = body.y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= radius * radius) continue;
+    hit = true;
+    if (d2 > 0.0001) {
+      const d = Math.sqrt(d2);
+      body.x = cx + (dx / d) * radius;
+      body.y = cy + (dy / d) * radius;
+    } else {
+      body.x = c.x - radius;
+    }
+  }
+  return hit;
+}
+
+// A car hitting a crate fast enough smashes straight through it; at a crawl
+// the crate is solid, like a bollard. Without this a car can wedge
+// nose-first on a crate at full speed and never get out.
+export function collideCratesForCar(crates, body, radius, speed, onSmash) {
+  let hit = false;
+  for (let i = crates.length - 1; i >= 0; i -= 1) {
+    const c = crates[i];
+    const cx = Math.max(c.x, Math.min(body.x, c.x + c.s));
+    const cy = Math.max(c.y, Math.min(body.y, c.y + c.s));
+    const dx = body.x - cx;
+    const dy = body.y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= radius * radius) continue;
+    if (Math.abs(speed) > 80) {
+      crates.splice(i, 1);
+      if (onSmash) onSmash();
+      continue;
+    }
+    hit = true;
+    if (d2 > 0.0001) {
+      const d = Math.sqrt(d2);
+      body.x = cx + (dx / d) * radius;
+      body.y = cy + (dy / d) * radius;
+    } else {
+      body.x = c.x - radius;
+    }
+  }
+  return hit;
+}
+
+export function rectsOverlapExport(a, b) {
+  return rectsOverlap(a, b);
+}

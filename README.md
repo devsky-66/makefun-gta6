@@ -4,7 +4,9 @@
 [![rank](https://make.fun/badge/gta6-01/devsky-66/makefun-gta6/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/devsky-66/makefun-gta6/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-Neon Bay — a fully original open-world crime game in the browser: explore a fictional harbour city on foot and by car, steal cars, outrun the Bay PD, and finish six story missions, ending with the mayor's blackmail case. A day-night cycle changes the light (and the streetlamps), buses and street bikes join the traffic, and at four wanted stars the police set roadblocks across the road ahead. Built from scratch in Canvas 2D with zero dependencies and zero network requests.
+**Neon Bay Nights** — a 2D top-down open-world crime game that plays offline in a desktop browser. Explore the fictional harbour city of Neon Bay on foot or behind the wheel, run six story missions, steal cars, dodge the police, and lose the heat. Everything is hand-drawn on canvas with zero external dependencies: no libraries, no network requests, no audio files — all sound effects are synthesised live with the Web Audio API.
+
+What is inside: a road-grid city with traffic, pedestrians, day/night cycle and headlights; three vehicle types (sedan, bus, motorbike) with different speed and handling; a 0–5 star wanted system with police chases, sirens and roadblocks at four stars; melee and shooting combat; cash, health and ammo pickups; six linked missions (dockside pickup, cross-town delivery, losing the heat, a 30-second bank standoff, a three-stop timed rush, and the mayor's ledger finale); HUD, minimap, start/pause/busted/wasted screens, and localStorage saves. `?seed=` fixes the random city; `?shot=start|drive|chase|mission` stages a screenshot scene from the real rules.
 
 ## Run it
 
@@ -12,8 +14,8 @@ Neon Bay — a fully original open-world crime game in the browser: explore a fi
 node serve.ts
 ```
 
-Then open http://localhost:8080 — WASD to move and drive, E to enter or steal a car, Space to punch, click to shoot, Esc to pause, M to mute. Progress (cash and mission) is saved in localStorage.
+Then open http://localhost:8080 — no build step, no install. Move with WASD or arrow keys, press E to enter or leave a car, Space for melee, click to shoot, P to pause, M to mute, R to retry a failed mission.
 
 ---
 
-<sub>Entered on [make.fun](https://make.fun/?ref=&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
+<sub>Entered on [make.fun](https://make.fun/?utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>

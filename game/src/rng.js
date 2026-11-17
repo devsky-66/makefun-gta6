@@ -1,10 +1,9 @@
-// Deterministic randomness for Neon Bay.
-// One mulberry32 stream per seed, so ?seed=N replays the same city,
-// the same traffic and the same pedestrians every single run.
-export function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function next() {
-    a |= 0;
+// Seeded randomness for Neon Bay Nights. One tiny generator (mulberry32) drives
+// every random choice in the game — city dressing, traffic, pedestrians, pickups —
+// so the same ?seed= number always builds the same city and the same day.
+export function createRandom(seed) {
+  let a = (seed >>> 0) || 1;
+  return function random() {
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -12,39 +11,17 @@ export function mulberry32(seed) {
   };
 }
 
-export function makeRng(seed) {
-  const next = mulberry32(seed);
-  return {
-    next,
-    range(lo, hi) { return lo + next() * (hi - lo); },
-    int(lo, hi) { return Math.floor(lo + next() * (hi - lo + 1)); },
-    pick(list) { return list[Math.floor(next() * list.length)]; },
-    chance(p) { return next() < p; },
-  };
+// Pick one entry from an array with the seeded generator.
+export function pick(random, list) {
+  return list[Math.floor(random() * list.length)];
 }
 
-export function clamp(v, lo, hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
-  return v;
+// A number between low and high (inclusive of low, exclusive of high).
+export function range(random, low, high) {
+  return low + random() * (high - low);
 }
 
-export function lerp(a, b, t) { return a + (b - a) * t; }
-
-export function dist(ax, ay, bx, by) { return Math.hypot(bx - ax, by - ay); }
-
-export function angleTo(ax, ay, bx, by) { return Math.atan2(by - ay, bx - ax); }
-
-// Shortest signed turn from heading a to heading b, in (-PI, PI].
-export function angleDiff(a, b) {
-  let d = b - a;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d <= -Math.PI) d += Math.PI * 2;
-  return d;
-}
-
-export function parseSeed(query) {
-  const m = /[?&]seed=(-?\d+)/.exec(query || '');
-  if (!m) return 1;
-  return (parseInt(m[1], 10) >>> 0) || 1;
+// A whole number between low and high, inclusive on both ends.
+export function intRange(random, low, high) {
+  return low + Math.floor(random() * (high - low + 1));
 }
