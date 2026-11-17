@@ -6,8 +6,6 @@ import { STEP } from './game.js';
 import { angleTo, angleDiff, dist, clamp } from './rng.js';
 import { SPOTS, roadWaypoint } from './city.js';
 
-const SAMPLE = 1 / 30;
-
 // Drive the player's car toward a world point: full throttle, steer to the
 // next road-grid waypoint, and ease off near a turn so it does not overshoot.
 function driveToward(game, tx, ty) {
@@ -31,7 +29,8 @@ function driveToward(game, tx, ty) {
 function walkToward(game, tx, ty) {
   const p = game.player;
   const want = angleTo(p.x, p.y, tx, ty);
-  const dx = Math.cos(want); const dy = Math.sin(want);
+  const dx = Math.cos(want);
+  const dy = Math.sin(want);
   return {
     up: dy < -0.3, down: dy > 0.3, left: dx < -0.3, right: dx > 0.3,
   };
@@ -49,7 +48,7 @@ function stageStart(game) {
 }
 
 function stagePlay(game) {
-  // Start the game, steal the starter car by the pier, drive up the avenue.
+  // Start the game, take the starter car by the pier, drive up the avenue.
   game.screen = 'play';
   game.enterCar();
   const target = { x: 1500, y: 800 };
@@ -63,7 +62,7 @@ function stagePlay(game) {
 }
 
 function stageChase(game) {
-  // Three stars, two cruisers on the tail, driving hard across Downtown Neon.
+  // Three stars, cruisers on the tail, driving hard across Downtown Neon.
   game.screen = 'play';
   game.enterCar();
   game.addWanted(3, 'Heat!');
@@ -81,12 +80,16 @@ function stageChase(game) {
 }
 
 function stageMission(game) {
-  // Mission 2 in progress: package collected, driving to the Palm Court drop-off.
+  // Mission 6 in progress at dusk: the ledger is lifted, the courier is
+  // being tailed to the marina, and the light is going down over the bay.
   game.screen = 'play';
-  game.missionIdx = 1; game.missionStep = 1; game.missionWait = 0;
-  game.showDialogue('Ray "Anchor" Marlow', 'Ray: "Package is in the trunk. Palm Court, no detours."');
+  game.missionIdx = 5;
+  game.missionStep = 1;
+  game.missionWait = 0;
+  game.clockMin = 18 * 60 + 20; // 18:20, dusk
+  game.showDialogue('Vera Cross', 'Vera: "Ledger is in the bag. Tail the courier to the marina — don\'t lose him."');
   game.enterCar();
-  const target = SPOTS.dropA;
+  const target = SPOTS.marina;
   for (let i = 0; i < 18 / STEP; i++) {
     tryEnter(game);
     const input = game.player.car ? driveToward(game, target.x, target.y) : walkToward(game, 1500, 2260);
@@ -99,7 +102,10 @@ function stageMission(game) {
 export function stageShot(name, game) {
   game.reset();
   // A fresh reset clears the save-based mission; force mission 1 for staging.
-  game.missionIdx = 0; game.missionStep = 0; game.missionDone = false; game.storyComplete = false;
+  game.missionIdx = 0;
+  game.missionStep = 0;
+  game.missionDone = false;
+  game.storyComplete = false;
   game.player.cash = 120; // staged shots always show the opening bankroll
   let screen = 'title';
   if (name === 'play') screen = stagePlay(game);

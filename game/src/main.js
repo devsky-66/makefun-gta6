@@ -19,8 +19,10 @@ let vw = 1280, vh = 720;
 let camX = game.player.x, camY = game.player.y;
 
 function resize() {
-  vw = window.innerWidth; vh = window.innerHeight;
-  canvas.width = vw; canvas.height = vh;
+  vw = window.innerWidth;
+  vh = window.innerHeight;
+  canvas.width = vw;
+  canvas.height = vh;
 }
 window.addEventListener('resize', resize);
 resize();
@@ -100,6 +102,7 @@ function retryAfterOver() {
   p.dead = false; p.busted = false; p.hp = 100; p.bustedTimer = 0;
   p.wanted = 0;
   game.police.length = 0;
+  game.roadblocks.length = 0;
   game.exitCar(true);
   p.x = 900; p.y = 330; // outside St. Marina Hospital
   game.screen = 'play';
@@ -162,7 +165,8 @@ function loop(now) {
 const shotMatch = /[?&]shot=([a-z]+)/.exec(location.search);
 if (shotMatch) {
   stageShot(shotMatch[1], game);
-  camX = game.player.x; camY = game.player.y;
+  camX = game.player.x;
+  camY = game.player.y;
   render();
 } else {
   requestAnimationFrame(loop);

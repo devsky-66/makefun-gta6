@@ -1,24 +1,33 @@
-// Neon Bay game state and rules: on-foot movement, driving, traffic, pedestrians,
-// stealing, wanted level, police pursuit, combat, pickups and the story missions.
+// Neon Bay game state and rules: on-foot movement, driving, traffic,
+// pedestrians, stealing, wanted level, police pursuit and roadblocks,
+// combat, pickups, the day-night cycle and the six story missions.
 import { makeRng, clamp, dist, angleTo, angleDiff } from './rng.js';
-import { WORLD_W, WORLD_H, ROAD_W, SIDEWALK, ROADS_V, ROADS_H, buildCity, onRoad, nearestRoadPoint, collideBuildings, insideBuilding, SPOTS, roadWaypoint } from './city.js';
+import {
+  WORLD_W, WORLD_H, ROAD_W, SIDEWALK, ROADS_V, ROADS_H, buildCity,
+  onRoad, nearestRoadPoint, collideBuildings, insideBuilding, SPOTS, roadWaypoint,
+} from './city.js';
 import { SoundBank } from './audio.js';
 
 export const SAVE_KEY = 'neon-bay-save-v1';
 export const STEP = 1 / 60;
 
-const CAR_MODELS = [
-  { name: 'Comet', color: '#d84a4a', top: 560, accel: 340 },
-  { name: 'Sedan', color: '#4a7dd8', top: 430, accel: 260 },
-  { name: 'Taxi', color: '#e8c832', top: 400, accel: 250 },
-  { name: 'Van', color: '#8a8f96', top: 360, accel: 200 },
-  { name: 'Coupe', color: '#37c8a0', top: 500, accel: 300 },
-  { name: 'Pickup', color: '#c97b2e', top: 420, accel: 240 },
+// Vehicle types. kind decides size and handling: a bus is slow and wide,
+// a bike is quick and turns on a dime, a car sits in between.
+export const CAR_MODELS = [
+  { name: 'Comet', color: '#d84a4a', top: 560, accel: 340, kind: 'car', turn: 2.5 },
+  { name: 'Sedan', color: '#4a7dd8', top: 430, accel: 260, kind: 'car', turn: 2.5 },
+  { name: 'Taxi', color: '#e8c832', top: 400, accel: 250, kind: 'car', turn: 2.5 },
+  { name: 'Van', color: '#8a8f96', top: 360, accel: 200, kind: 'car', turn: 2.2 },
+  { name: 'Coupe', color: '#37c8a0', top: 500, accel: 300, kind: 'car', turn: 2.7 },
+  { name: 'Pickup', color: '#c97b2e', top: 420, accel: 240, kind: 'car', turn: 2.4 },
+  { name: 'City Bus', color: '#2e8a6a', top: 300, accel: 160, kind: 'bus', turn: 1.6 },
+  { name: 'Street Bike', color: '#c94a8a', top: 640, accel: 430, kind: 'bike', turn: 3.6 },
 ];
 const PED_COLORS = ['#e8b88a', '#8a5a3a', '#f0d0b0', '#6b4a2f', '#d8a070'];
 const PED_SHIRTS = ['#d84a4a', '#4a7dd8', '#37c8a0', '#e8c832', '#9a6fc9', '#f0f0f0', '#333333', '#c95a8a'];
 
-// Five story missions. Each step is: go to a spot, wait out a timer, or lose the heat.
+// Six story missions. Each step is: go to a spot, wait out a timer, or lose
+// the heat. Mission 6 is the new final chapter: the mayor's blackmail case.
 export const MISSIONS = [
   {
     title: '1 · The New Arrival', client: 'Ray "Anchor" Marlow',
@@ -67,6 +76,18 @@ export const MISSIONS = [
     ],
     reward: 2000,
   },
+  {
+    title: '6 · The Mayor\'s Shakedown', client: 'Vera Cross',
+    intro: 'Vera: "One more job, then we are clean. The mayor has been shaking down every shop on the bay — and the proof is in a ledger at City Hall. Get the evidence, tail his courier, and confront him at the pier."',
+    steps: [
+      { type: 'goto', spot: 'cityhall', text: 'Lift the blackmail ledger from City Hall', onArriveWanted: 2 },
+      { type: 'goto', spot: 'marina', text: 'Tail the mayor\'s courier to Marina Slip 9' },
+      { type: 'wait', seconds: 12, text: 'Photograph the handoff at the marina' },
+      { type: 'loseheat', text: 'Lose the police before the confrontation' },
+      { type: 'goto', spot: 'pier', text: 'Confront the mayor at Neon Pier' },
+    ],
+    reward: 3000,
+  },
 ];
 
 export function loadSave() {
@@ -77,6 +98,15 @@ export function loadSave() {
     if (typeof s.cash !== 'number' || typeof s.mission !== 'number') return null;
     return s;
   } catch { return null; }
+}
+
+// Day phase from the game clock (minutes since midnight).
+// Day 06:00–17:30, dusk 17:30–19:30, night 19:30–06:00.
+export function dayPhase(clockMin) {
+  const mins = ((Math.floor(clockMin) % (24 * 60)) + 24 * 60) % (24 * 60);
+  if (mins >= 360 && mins < 1050) return { name: 'day', icon: '☀', darkness: 0 };
+  if (mins >= 1050 && mins < 1170) return { name: 'dusk', icon: '🌆', darkness: 0.16 };
+  return { name: 'night', icon: '☾', darkness: 0.44 };
 }
 
 export class Game {
@@ -101,23 +131,25 @@ export class Game {
     this.cars = [];
     this.peds = [];
     this.police = [];
+    this.roadblocks = [];
     this.traffic = [];
     this.pickups = [];
     this.particles = [];
     this.floaters = [];
-    this.crimeTimer = 0;      // seconds since last crime
-    this.crimeCooldown = 0;   // per-crime rate limit
-    this.crashCd = 0;         // per-crash rate limit so one shunt is not a loop
+    this.crimeTimer = 0;
+    this.crimeCooldown = 0;
+    this.crashCd = 0;
     this.policeSpawnT = 0;
+    this.blockSpawnT = 0;
     this.missionIdx = save ? Math.min(save.mission, MISSIONS.length - 1) : 0;
     this.missionStep = 0;
     this.missionWait = 0;
     this.missionDone = save ? save.mission >= MISSIONS.length : false;
     this.bestCash = save ? (save.best || save.cash) : 120;
     this.storyComplete = false;
-    this.dialogue = null;     // {speaker, text, t}
-    this.toast = null;        // {text, t}
-    this.screen = 'title';    // title | play | pause | over
+    this.dialogue = null;
+    this.toast = null;
+    this.screen = 'title';
     this.overReason = '';
     this.shake = 0;
     this.spawnWorld();
@@ -126,19 +158,21 @@ export class Game {
 
   spawnWorld() {
     const rng = this.rng;
-    // Parked cars along roads and in lots.
-    for (let i = 0; i < 26; i++) {
-      const road = rng.chance(0.5) ? { v: true, at: rng.pick(ROADS_V) } : { v: false, at: rng.pick(ROADS_H) };
-      const along = rng.range(120, road.v ? WORLD_H - 120 : WORLD_W - 120);
+    // Parked cars along roads and in lots, buses and bikes included.
+    for (let i = 0; i < 28; i++) {
+      const vertical = rng.chance(0.5);
+      const road = vertical ? rng.pick(ROADS_V) : rng.pick(ROADS_H);
+      const along = rng.range(120, vertical ? WORLD_H - 120 : WORLD_W - 120);
       const side = rng.chance(0.5) ? 1 : -1;
-      const x = road.v ? road.at + side * (ROAD_W / 2 - 16) : along;
-      const y = road.v ? along : road.at + side * (ROAD_W / 2 - 16);
+      const x = vertical ? road + side * (ROAD_W / 2 - 16) : along;
+      const y = vertical ? along : road + side * (ROAD_W / 2 - 16);
       if (insideBuilding(this.city.buildings, x, y)) continue;
       const model = rng.pick(CAR_MODELS);
-      this.cars.push(this.makeCar(x, y, road.v ? (side > 0 ? Math.PI / 2 : -Math.PI / 2) : (side > 0 ? 0 : Math.PI), model, { parked: true }));
+      const angle = vertical ? (side > 0 ? Math.PI / 2 : -Math.PI / 2) : (side > 0 ? 0 : Math.PI);
+      this.cars.push(this.makeCar(x, y, angle, model, { parked: true }));
     }
-    // Moving traffic on the road network.
-    for (let i = 0; i < 16; i++) this.traffic.push(this.makeTrafficCar());
+    // Moving traffic on the road network: cars, a bus or two, and bikes.
+    for (let i = 0; i < 18; i++) this.traffic.push(this.makeTrafficCar());
     // Pedestrians on sidewalks.
     for (let i = 0; i < 34; i++) this.peds.push(this.makePed());
     // Pickups: cash, health, ammo scattered around the city.
@@ -146,7 +180,7 @@ export class Game {
       { kind: 'cash', x: 900, y: 300 }, { kind: 'health', x: 2100, y: 800 }, { kind: 'ammo', x: 300, y: 1300 },
       { kind: 'cash', x: 2700, y: 1300 }, { kind: 'health', x: 1500, y: 1800 }, { kind: 'ammo', x: 3300, y: 1800 },
       { kind: 'cash', x: 1500, y: 300 }, { kind: 'health', x: 2700, y: 2300 }, { kind: 'ammo', x: 900, y: 2300 },
-      { kind: 'cash', x: 2100, y: 300 },
+      { kind: 'cash', x: 2100, y: 300 }, { kind: 'health', x: 900, y: 1800 }, { kind: 'ammo', x: 3300, y: 300 },
     ];
     for (const s of spots) this.pickups.push({ ...s, taken: false, bob: rng.range(0, 6) });
     // The player's starter car near the pier.
@@ -155,11 +189,16 @@ export class Game {
   }
 
   makeCar(x, y, angle, model, opts = {}) {
+    const kind = model.kind || 'car';
+    const dims = kind === 'bus' ? { w: 64, h: 26 } : kind === 'bike' ? { w: 34, h: 16 } : { w: 46, h: 22 };
     return {
-      x, y, angle, speed: 0, model, color: opts.color || model.color,
-      top: model.top, accel: model.accel, parked: !!opts.parked, owned: !!opts.owned,
+      x, y, angle, speed: 0, model, kind,
+      color: opts.color || model.color,
+      top: model.top, accel: model.accel, turn: model.turn || 2.5,
+      parked: !!opts.parked, owned: !!opts.owned,
       police: !!opts.police, npc: !!opts.npc, driver: opts.driver !== false && !opts.parked,
-      hp: 100, w: 46, h: 22, skid: 0,
+      roadblock: !!opts.roadblock,
+      hp: 100, w: dims.w, h: dims.h, skid: 0,
     };
   }
 
@@ -170,15 +209,20 @@ export class Game {
     const along = rng.range(100, vertical ? WORLD_H - 100 : WORLD_W - 100);
     const dir = rng.chance(0.5) ? 1 : -1;
     const lane = dir > 0 ? 26 : -26;
-    const model = rng.pick(CAR_MODELS);
+    // Buses and bikes join the traffic mix; bikes ride a little faster.
+    const roll = rng.next();
+    const model = roll < 0.12 ? CAR_MODELS[6] : roll < 0.28 ? CAR_MODELS[7] : rng.pick(CAR_MODELS.slice(0, 6));
     const car = this.makeCar(
       vertical ? road + lane : along,
       vertical ? along : road + lane,
       vertical ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI),
       model, { npc: true, driver: true },
     );
-    car.vertical = vertical; car.road = road; car.dir = dir; car.lane = lane;
-    car.cruise = rng.range(150, 240);
+    car.vertical = vertical;
+    car.road = road;
+    car.dir = dir;
+    car.lane = lane;
+    car.cruise = model.kind === 'bike' ? rng.range(230, 300) : model.kind === 'bus' ? rng.range(110, 160) : rng.range(150, 240);
     return car;
   }
 
@@ -202,9 +246,26 @@ export class Game {
     try {
       this.bestCash = Math.max(this.bestCash, this.player.cash);
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        cash: Math.round(this.player.cash), mission: this.missionDone ? MISSIONS.length : this.missionIdx, best: Math.round(this.bestCash),
+        cash: Math.round(this.player.cash),
+        mission: this.missionDone ? MISSIONS.length : this.missionIdx,
+        best: Math.round(this.bestCash),
       }));
-    } catch { /* storage unavailable: game still plays */ }
+    } catch { /* storage unavailable: the game still plays */ }
+  }
+
+  // ---- day and night ----
+  phase() { return dayPhase(this.clockMin); }
+  isNight() { return this.phase().name === 'night'; }
+  isDusk() { return this.phase().name === 'dusk'; }
+  clockString() {
+    const mins = Math.floor(this.clockMin) % (24 * 60);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+  }
+  speedKmh() {
+    const car = this.player.car;
+    return car ? Math.round(Math.abs(car.speed) * 0.32) : 0;
   }
 
   // ---- crimes / wanted ----
@@ -236,7 +297,9 @@ export class Game {
   }
   startMission(idx, silent) {
     if (idx >= MISSIONS.length) { this.missionDone = true; return; }
-    this.missionIdx = idx; this.missionStep = 0; this.missionWait = 0;
+    this.missionIdx = idx;
+    this.missionStep = 0;
+    this.missionWait = 0;
     const m = MISSIONS[idx];
     if (!silent) {
       this.showDialogue(m.client, m.intro);
@@ -257,7 +320,7 @@ export class Game {
       if (this.missionIdx + 1 >= MISSIONS.length) {
         this.missionDone = true;
         this.storyComplete = true;
-        this.showDialogue('Vera Cross', 'Vera: "That\'s the whole board, kid. Neon Bay is yours now. Go enjoy it."');
+        this.showDialogue('Vera Cross', 'Vera: "The ledger is public, the mayor is finished, and the bay is ours. That\'s the whole story, kid."');
       } else {
         this.startMission(this.missionIdx + 1);
       }
@@ -268,10 +331,12 @@ export class Game {
     if (!m) return;
     this.showDialogue('Mission failed', reason + ' — try again. The job is still waiting.');
     this.sounds.fail();
-    this.missionStep = 0; this.missionWait = 0;
+    this.missionStep = 0;
+    this.missionWait = 0;
     this.player.wanted = Math.max(0, this.player.wanted - 1);
     this.police.length = 0;
-    // Respawn the player near the current step target so retry is quick.
+    this.roadblocks.length = 0;
+    // Respawn near the current step target so the retry is quick.
     const t = this.missionTarget();
     if (t) {
       const rp = nearestRoadPoint(t.x, t.y);
@@ -287,9 +352,10 @@ export class Game {
 
   // ---- entering / leaving cars ----
   nearestCar(maxD) {
-    let best = null; let bd = maxD;
+    let best = null;
+    let bd = maxD;
     for (const c of this.cars) {
-      if (c.police) continue;
+      if (c.police || c.roadblock) continue;
       const d = dist(this.player.x, this.player.y, c.x, c.y);
       if (d < bd) { bd = d; best = c; }
     }
@@ -317,7 +383,8 @@ export class Game {
   exitCar(silent) {
     const car = this.player.car;
     if (!car) return;
-    car.speed = 0; car.parked = true;
+    car.speed = 0;
+    car.parked = true;
     const px = car.x + Math.cos(car.angle + Math.PI / 2) * 40;
     const py = car.y + Math.sin(car.angle + Math.PI / 2) * 40;
     this.player.x = clamp(px, 30, WORLD_W - 30);
@@ -332,13 +399,16 @@ export class Game {
     const p = this.player;
     if (p.shootCd > 0) return;
     if (p.ammo <= 0) { this.sounds.blip(160, 0.08, 'square', 0.12); return; }
-    p.shootCd = 0.28; p.ammo--;
+    p.shootCd = 0.28;
+    p.ammo--;
     p.angle = angleTo(p.x, p.y, tx, ty);
     this.sounds.shoot();
     this.particles.push({ x: p.x + Math.cos(p.angle) * 24, y: p.y + Math.sin(p.angle) * 24, vx: 0, vy: 0, t: 0, life: 0.08, kind: 'muzzle' });
-    // Hit-scan: nearest ped / police car along the shot line.
+    // Hit-scan: the nearest ped or police car along the shot line.
     const range = 520;
-    let bestD = range; let hit = null; let hitKind = '';
+    let bestD = range;
+    let hit = null;
+    let hitKind = '';
     for (const ped of this.peds) {
       if (ped.down > 0) continue;
       const d = dist(p.x, p.y, ped.x, ped.y);
@@ -350,10 +420,19 @@ export class Game {
       const a = angleTo(p.x, p.y, pc.x, pc.y);
       if (d < bestD && Math.abs(angleDiff(p.angle, a)) < 0.12) { bestD = d; hit = pc; hitKind = 'police'; }
     }
+    for (const rb of this.roadblocks) {
+      const d = dist(p.x, p.y, rb.x, rb.y);
+      const a = angleTo(p.x, p.y, rb.x, rb.y);
+      if (d < bestD && Math.abs(angleDiff(p.angle, a)) < 0.12) { bestD = d; hit = rb; hitKind = 'police'; }
+    }
     if (hit) {
       this.particles.push({ x: hit.x, y: hit.y, vx: 0, vy: 0, t: 0, life: 0.25, kind: 'hit' });
       if (hitKind === 'ped') { hit.down = 999; this.crime(1, 'Assault'); }
-      else { hit.hp -= 34; if (hit.hp <= 0) this.destroyPoliceCar(hit); else this.crime(1, 'Attacking police'); }
+      else {
+        hit.hp -= 34;
+        if (hit.hp <= 0) this.destroyPoliceCar(hit);
+        else this.crime(1, 'Attacking police');
+      }
     }
   }
   punch() {
@@ -364,7 +443,8 @@ export class Game {
     for (const ped of this.peds) {
       if (ped.down > 0) continue;
       if (dist(p.x, p.y, ped.x, ped.y) < 46) {
-        ped.down = 999; ped.flee = 0;
+        ped.down = 999;
+        ped.flee = 0;
         this.crime(1, 'Assault');
         this.floater(ped.x, ped.y - 20, 'Ouch!', '#ffd24a');
       }
@@ -374,7 +454,10 @@ export class Game {
     this.particles.push({ x: pc.x, y: pc.y, vx: 0, vy: 0, t: 0, life: 0.6, kind: 'boom' });
     this.sounds.crash();
     this.shake = 10;
-    this.police.splice(this.police.indexOf(pc), 1);
+    const inPolice = this.police.indexOf(pc);
+    if (inPolice >= 0) this.police.splice(inPolice, 1);
+    const inBlock = this.roadblocks.indexOf(pc);
+    if (inBlock >= 0) this.roadblocks.splice(inBlock, 1);
     this.player.cash += 50;
     this.floater(pc.x, pc.y - 20, '+$50 impound bonus', '#7dff8a');
   }
@@ -385,11 +468,41 @@ export class Game {
     p.hp -= amount;
     this.shake = Math.max(this.shake, 6);
     if (p.hp <= 0) {
-      p.hp = 0; p.dead = true;
+      p.hp = 0;
+      p.dead = true;
       this.overReason = source || 'wasted';
       this.screen = 'over';
       this.sounds.fail();
       this.save();
+    }
+  }
+
+  // ---- roadblocks: at 4 stars and above the PD parks cruisers across the
+  // road ahead of you. They are solid, they shoot back by ramming, and they
+  // clear out once the heat drops below 4 stars. ----
+  updateRoadblocks(dt) {
+    const p = this.player;
+    if (p.wanted < 4) {
+      if (this.roadblocks.length > 0) this.roadblocks.length = 0;
+      return;
+    }
+    this.blockSpawnT -= dt;
+    if (this.roadblocks.length < 2 && this.blockSpawnT <= 0) {
+      this.blockSpawnT = 6;
+      // Park across the next intersection ahead of the player's heading.
+      const ahead = 520;
+      const ax = clamp(p.x + Math.cos(p.angle) * ahead, 100, WORLD_W - 100);
+      const ay = clamp(p.y + Math.sin(p.angle) * ahead, 100, WORLD_H - 100);
+      const rp = nearestRoadPoint(ax, ay);
+      const angle = rp.vertical ? 0 : Math.PI / 2;
+      const off = this.roadblocks.length === 0 ? -34 : 34;
+      const bx = rp.vertical ? rp.x : rp.x + off;
+      const by = rp.vertical ? rp.y + off : rp.y;
+      const block = this.makeCar(bx, by, angle, { name: 'Interceptor', color: '#1c1e26', top: 0, accel: 0, kind: 'car', turn: 0 }, { police: true, driver: true, roadblock: true });
+      block.hp = 160;
+      this.roadblocks.push(block);
+      this.showToast('Roadblock ahead!');
+      this.sounds.wanted();
     }
   }
 
@@ -408,11 +521,11 @@ export class Game {
     this.particles = this.particles.filter((pt) => pt.t < pt.life);
 
     if (this.screen !== 'play') {
-      // World idles behind menus: traffic keeps rolling.
+      // The world idles behind menus: traffic keeps rolling, clock keeps time.
       this.updateTraffic(dt);
       this.updatePeds(dt, true);
       this.sounds.setEngine(0, false);
-      this.sounds.setSiren(false);
+      this.sounds.setSiren(false, 0);
       return;
     }
     const p = this.player;
@@ -422,7 +535,8 @@ export class Game {
     // Wanted decay: lay low and the heat dies down.
     this.crimeTimer += dt;
     if (p.wanted > 0 && this.crimeTimer > 22) {
-      p.wanted--; this.crimeTimer = 0;
+      p.wanted--;
+      this.crimeTimer = 0;
       this.showToast(p.wanted === 0 ? 'You lost the cops. Heat is off.' : 'Heat dying down… ' + p.wanted + '★ left');
     }
 
@@ -443,18 +557,25 @@ export class Game {
     this.updateTraffic(dt);
     this.updatePeds(dt, false);
     this.updatePolice(dt);
+    this.updateRoadblocks(dt);
     this.updatePickups(dt);
     this.updateMission(dt);
 
-    // Engine + siren audio follow the action.
+    // Engine + siren follow the action; the siren's volume tracks the
+    // nearest cruiser, so it swells as the police close in.
     const speed01 = p.car ? Math.abs(p.car.speed) / p.car.top : 0;
     this.sounds.setEngine(speed01, !!p.car);
-    this.sounds.setSiren(this.police.length > 0);
+    let nearestSiren = Infinity;
+    for (const pc of this.police) nearestSiren = Math.min(nearestSiren, dist(p.x, p.y, pc.x, pc.y));
+    for (const rb of this.roadblocks) nearestSiren = Math.min(nearestSiren, dist(p.x, p.y, rb.x, rb.y));
+    const sirenLevel = Number.isFinite(nearestSiren) ? clamp(1 - nearestSiren / 1100, 0.15, 1) : 0;
+    this.sounds.setSiren(this.police.length > 0 || this.roadblocks.length > 0, sirenLevel);
 
-    // Busted: a cop car sits on an on-foot player at low speed.
+    // Busted: a cruiser sits on an on-foot player at low speed.
     if (!p.car && p.wanted > 0 && !p.dead) {
       let near = false;
       for (const pc of this.police) if (dist(p.x, p.y, pc.x, pc.y) < 46) near = true;
+      for (const rb of this.roadblocks) if (dist(p.x, p.y, rb.x, rb.y) < 46) near = true;
       if (near) {
         p.bustedTimer += dt;
         if (p.bustedTimer > 1.6) {
@@ -500,7 +621,8 @@ export class Game {
     if (!input.up && !input.down) car.speed -= car.speed * 0.9 * dt;
     car.speed = clamp(car.speed, -car.top * 0.35, car.top * offroad);
     if (Math.abs(car.speed) < 4 && !input.up) car.speed = 0;
-    const steerAmt = steer * clamp(Math.abs(car.speed) / 140, 0, 1) * 2.5 * dt * (car.speed < 0 ? -1 : 1);
+    // Bikes turn sharp, buses turn wide; steering weakens at a standstill.
+    const steerAmt = steer * clamp(Math.abs(car.speed) / 140, 0, 1) * car.turn * dt * (car.speed < 0 ? -1 : 1);
     car.angle += steerAmt;
     const nx = car.x + Math.cos(car.angle) * car.speed * dt;
     const ny = car.y + Math.sin(car.angle) * car.speed * dt;
@@ -508,19 +630,31 @@ export class Game {
     const hit = collideBuildings(this.city.buildings, nx, ny, 22);
     car.x = clamp(hit.x, 30, WORLD_W - 30);
     car.y = clamp(hit.y, 30, WORLD_H - 30);
-    if (hit.hit && Math.abs(car.speed) > 120) {
-      this.crashCar(car, before);
-    }
-    // Skid particles at hard steering.
+    if (hit.hit && Math.abs(car.speed) > 120) this.crashCar(car, before);
+    // Skid smoke at hard steering.
     if (Math.abs(steer) > 0 && Math.abs(car.speed) > 300 && this.rng.chance(0.4)) {
       this.particles.push({ x: car.x - Math.cos(car.angle) * 20, y: car.y - Math.sin(car.angle) * 20, vx: 0, vy: 0, t: 0, life: 0.4, kind: 'smoke' });
     }
-    // Collisions with traffic cars: shunt them aside; only a hard hit
-    // (and at most one per second) counts as a crash.
+    // Roadblocks are solid: ramming one at speed wrecks the car.
+    for (const rb of this.roadblocks) {
+      if (dist(car.x, car.y, rb.x, rb.y) < 44) {
+        car.x = before.x; car.y = before.y;
+        if (Math.abs(car.speed) > 200 && this.crashCd <= 0) {
+          this.crashCd = 1;
+          this.crashCar(car, before);
+          this.crime(1, 'Ram a roadblock');
+        } else {
+          car.speed *= 0.4;
+        }
+      }
+    }
+    // Collisions with traffic: shunt them aside; only a hard hit (and at
+    // most one per second) counts as a crash.
     for (const t of this.traffic) {
       if (dist(car.x, car.y, t.x, t.y) < 46) {
         const push = angleTo(t.x, t.y, car.x, car.y);
-        t.x += Math.cos(push) * 30; t.y += Math.sin(push) * 30;
+        t.x += Math.cos(push) * 30;
+        t.y += Math.sin(push) * 30;
         car.speed *= 0.96;
         if (Math.abs(car.speed) > 260 && this.crashCd <= 0) {
           this.crashCd = 1;
@@ -573,7 +707,7 @@ export class Game {
         const along = t.vertical ? o.y - t.y : o.x - t.x;
         if (along * t.dir > 0 && along * t.dir < 70) blocked = true;
       }
-      // Swerve around the player's car instead of stopping dead in front of it.
+      // Swerve around the player's car instead of stopping dead in front.
       const p = this.player;
       let swerving = false;
       if (p.car) {
@@ -647,14 +781,13 @@ export class Game {
         clamp(p.x + Math.cos(a) * 700, 80, WORLD_W - 80),
         clamp(p.y + Math.sin(a) * 700, 80, WORLD_H - 80),
       );
-      const pc = this.makeCar(rp.x, rp.y, angleTo(rp.x, rp.y, p.x, p.y), { name: 'Interceptor', color: '#1c1e26', top: 540, accel: 380 }, { police: true, driver: true });
+      const pc = this.makeCar(rp.x, rp.y, angleTo(rp.x, rp.y, p.x, p.y), { name: 'Interceptor', color: '#1c1e26', top: 540, accel: 380, kind: 'car', turn: 2.6 }, { police: true, driver: true });
       pc.hp = 120;
       this.police.push(pc);
       this.sounds.wanted();
     }
     // When the heat is off, remaining units give up and drive away.
     if (wanted === 0 && this.police.length > 0) {
-      this.policeSpawnT -= dt * 0;
       for (const pc of this.police) pc.givingUp = true;
     }
     for (const pc of [...this.police]) {
@@ -666,8 +799,8 @@ export class Game {
         if (dist(pc.x, pc.y, p.x, p.y) > 1100) this.police.splice(this.police.indexOf(pc), 1);
         continue;
       }
-      // Far away, cruisers route over the road grid like the autopilot;
-      // up close they steer straight at the player to ram.
+      // Far away, cruisers route over the road grid; up close they steer
+      // straight at the player to ram.
       const d = dist(pc.x, pc.y, p.x, p.y);
       const wp = d > 260 ? roadWaypoint(pc.x, pc.y, p.x, p.y) : { x: p.x, y: p.y };
       const targetA = angleTo(pc.x, pc.y, wp.x, wp.y);
@@ -684,7 +817,8 @@ export class Game {
       if (d < 48) {
         if (p.car) {
           p.car.speed *= 0.92;
-          p.car.x += Math.cos(pc.angle) * 14; p.car.y += Math.sin(pc.angle) * 14;
+          p.car.x += Math.cos(pc.angle) * 14;
+          p.car.y += Math.sin(pc.angle) * 14;
           pc.speed *= 0.85; // the cruiser bounces off instead of gluing on
           this.damagePlayer(14 * dt, 'wasted');
           if (this.rng.chance(0.02)) this.sounds.crash();
@@ -729,15 +863,5 @@ export class Game {
       if (s.onStartWanted && !s.started) { s.started = true; this.addWanted(s.onStartWanted, 'Alarm tripped!'); }
       if (p.wanted === 0) this.completeStep();
     }
-  }
-
-  speedKmh() {
-    const car = this.player.car;
-    return car ? Math.round(Math.abs(car.speed) * 0.32) : 0;
-  }
-  clockString() {
-    const mins = Math.floor(this.clockMin) % (24 * 60);
-    const h = Math.floor(mins / 60); const m = mins % 60;
-    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
   }
 }
