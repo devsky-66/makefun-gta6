@@ -5,17 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cinder Bay Nights — open-world crime game</title>
 <style>
-  html, body { margin: 0; padding: 0; background: #0c0e14; height: 100%; }
-  body { display: flex; align-items: center; justify-content: center; font-family: sans-serif; }
-  #wrap { text-align: center; }
-  canvas { background: #1a1030; max-width: 96vw; max-height: 92vh; image-rendering: auto; }
-  #hint { color: #8a93a6; font-size: 13px; margin-top: 8px; }
+  html, body { margin: 0; padding: 0; background: #0b0d13; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
+  #stage { text-align: center; }
+  canvas { background: #1a1030; max-width: 97vw; max-height: 92vh; image-rendering: auto; border-radius: 4px; }
+  #keys { color: #8a93a6; font-size: 13px; margin-top: 10px; }
 </style>
 </head>
 <body>
-<div id="wrap">
+<div id="stage">
   <canvas id="game" width="960" height="640"></canvas>
-  <div id="hint">WASD move / drive &nbsp;·&nbsp; E enter or steal a car &nbsp;·&nbsp; mouse aim, click / Space shoot &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
+  <div id="keys">WASD to move / drive &nbsp;·&nbsp; E to get in or steal a car &nbsp;·&nbsp; aim with the mouse, click or Space to shoot &nbsp;·&nbsp; P pauses &nbsp;·&nbsp; M mutes</div>
 </div>
 <script type="module" src="./src/main.js"></script>
 </body>

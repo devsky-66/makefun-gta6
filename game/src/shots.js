@@ -6,21 +6,44 @@
 // a blocked driver re-plans its route, reverses out when it has not moved
 // 8px in a second, shoves a blocking car after 2s, and a stuck pedestrian
 // walks back to the nearest road point.
-import { STEP, addWanted, clamp, footEscape, planRoute, driveAlongRoute, makeCar, missionTarget, resetWorld, startMission, stepGame } from './game.js';
+import { STEP, addWanted, clamp, footEscape, planRoute, driveAlongRoute, missionTarget, resetWorld, startMission, stepGame } from './game.js';
 import { SPOTS, nearestCrossing, nearestRoadPoint, randomCrossing } from './city.js';
 
-function angDiff(a, b) { let d = a - b; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; }
+function angleDiff(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
 
-function fresh(g, hour) {
+function freshWorld(g, hour) {
   resetWorld(g, g.random);
-  g.cash = 200; g.health = 100; g.ammo = 24; g.wanted = 0; g.wantedTimer = 0;
-  g.missionIndex = 0; g.mission = null; g.missionFailed = false; g.over = null;
-  g.banner = ''; g.bannerT = 0; g.dialog = []; g.dialogT = 0;
-  g.player.x = SPOTS.hideout.x; g.player.y = SPOTS.hideout.y + 60;
-  g.player.angle = -Math.PI / 2; g.player.car = null; g.player.onFoot = true;
-  g.clock = hour * 3600; g.events.length = 0;
+  g.cash = 200;
+  g.health = 100;
+  g.ammo = 24;
+  g.wanted = 0;
+  g.wantedTimer = 0;
+  g.missionIndex = 0;
+  g.mission = null;
+  g.missionFailed = false;
+  g.over = null;
+  g.banner = '';
+  g.bannerT = 0;
+  g.dialog = [];
+  g.dialogT = 0;
+  g.player.x = SPOTS.hideout.x;
+  g.player.y = SPOTS.hideout.y + 60;
+  g.player.angle = -Math.PI / 2;
+  g.player.car = null;
+  g.player.onFoot = true;
+  g.clock = hour * 3600;
+  g.events.length = 0;
   g.camX = clamp(g.player.x - 480, 0, 2400 - 960);
   g.camY = clamp(g.player.y - 320, 0, 1800 - 640);
+}
+
+function idleInput() {
+  return { up: false, down: false, left: false, right: false, run: false, shoot: false, aimAngle: null, enterPressed: false };
 }
 
 // Drive the player's car toward a point with the shared driver brain.
@@ -29,7 +52,8 @@ function driveTo(g, target, dt, brain) {
   if (!car) return true;
   if (!brain.route || brain.dest !== target) {
     planRoute(car, target);
-    brain.dest = target; brain.route = car.route;
+    brain.dest = target;
+    brain.route = car.route;
   }
   return driveAlongRoute(g, car, dt, 300);
 }
@@ -42,11 +66,15 @@ function walkTo(g, target, dt, brain) {
   if (d < 30) return true;
   const want = Math.atan2(target.y - p.y, target.x - p.x);
   p.angle = want;
-  const input = { up: false, down: false, left: false, right: false, run: true, shoot: false, aimAngle: null, enterPressed: false };
-  const dx = Math.cos(want), dy = Math.sin(want);
-  input.right = dx > 0.3; input.left = dx < -0.3;
-  input.down = dy > 0.3; input.up = dy < -0.3;
-  stepGame(g, input, dt);
+  const keys = idleInput();
+  keys.run = true;
+  const dx = Math.cos(want);
+  const dy = Math.sin(want);
+  keys.right = dx > 0.3;
+  keys.left = dx < -0.3;
+  keys.down = dy > 0.3;
+  keys.up = dy < -0.3;
+  stepGame(g, keys, dt);
   footEscape(g, p, dt, brain.foot);
   return false;
 }
@@ -55,7 +83,8 @@ function nearestCar(g, maxD) {
   // Prefer a parked car: it stays put while the player walks up to it.
   const parked = g.cars.filter((c) => c.kind === 'parked');
   const pool = parked.length ? parked : g.cars;
-  let best = null; let bestD = maxD;
+  let best = null;
+  let bestD = maxD;
   for (const c of pool) {
     if (c.kind === 'police') continue;
     const d = Math.hypot(c.x - g.player.x, c.y - g.player.y);
@@ -75,42 +104,48 @@ function stealNearest(g, brain) {
     walkTo(g, { x: car.x, y: car.y }, STEP, brain);
     return false;
   }
-  stepGame(g, { up: false, down: false, left: false, right: false, run: false, shoot: false, aimAngle: null, enterPressed: true }, STEP);
+  const keys = idleInput();
+  keys.enterPressed = true;
+  stepGame(g, keys, STEP);
   return !!g.player.car;
 }
 
 function runSeconds(g, seconds, fn) {
   const steps = Math.round(seconds / STEP);
-  for (let i = 0; i < steps; i++) fn(STEP);
+  for (let i = 0; i < steps; i += 1) fn(STEP);
 }
 
 export function runShot(g, shot, sound) {
   const brain = { dest: null, route: null, seeking: false, foot: { t: 0, lx: 0, ly: 0 } };
   if (shot === 'start') {
-    fresh(g, 19);
+    freshWorld(g, 19);
     g.state = 'title';
     // Let traffic roll behind the title for a living street scene.
     runSeconds(g, 5, (dt) => {
-      const saved = g.state; g.state = 'play';
-      stepGame(g, { up: false, down: false, left: false, right: false, run: false, shoot: false, aimAngle: null, enterPressed: false }, dt);
+      const saved = g.state;
+      g.state = 'play';
+      stepGame(g, idleInput(), dt);
       g.state = saved;
     });
     g.state = 'title';
-    g.player.x = SPOTS.hideout.x; g.player.y = SPOTS.hideout.y + 60;
+    g.player.x = SPOTS.hideout.x;
+    g.player.y = SPOTS.hideout.y + 60;
     return;
   }
   if (shot === 'drive') {
-    fresh(g, 10);
+    freshWorld(g, 10);
     startMission(g, 0);
     runSeconds(g, 26, (dt) => {
       if (!g.player.car) { stealNearest(g, brain); return; }
       driveTo(g, SPOTS.pierGate, dt, brain);
-      stepGame(g, { up: true, down: false, left: false, right: false, run: false, shoot: false, aimAngle: null, enterPressed: false }, 0);
+      const keys = idleInput();
+      keys.up = true;
+      stepGame(g, keys, 0);
     });
     return;
   }
   if (shot === 'chase') {
-    fresh(g, 21);
+    freshWorld(g, 21);
     startMission(g, 0);
     // Steal, then keep driving across town with the heat on — when one
     // destination is reached, pick the far end of town so the chase never
@@ -123,7 +158,7 @@ export function runShot(g, shot, sound) {
         chaseTarget = chaseTarget === SPOTS.market ? SPOTS.hideout : SPOTS.market;
         brain.dest = null;
       }
-      stepGame(g, { up: false, down: false, left: false, right: false, run: false, shoot: false, aimAngle: null, enterPressed: false }, 0);
+      stepGame(g, idleInput(), 0);
     });
     g.wanted = 4;
     g.banner = '4 stars — lose the cops!';
@@ -131,12 +166,12 @@ export function runShot(g, shot, sound) {
     return;
   }
   // mission
-  fresh(g, 17);
+  freshWorld(g, 17);
   startMission(g, 2);
   runSeconds(g, 30, (dt) => {
     if (!g.player.car) { stealNearest(g, brain); return; }
     driveTo(g, SPOTS.bank, dt, brain);
-    stepGame(g, { up: false, down: false, left: false, right: false, run: false, shoot: false, aimAngle: null, enterPressed: false }, 0);
+    stepGame(g, idleInput(), 0);
   });
   g.dialog = ['Vex: The ledger page is in the bank vault room. In and out.', 'Rook: Alarms mean I run. You know the drill.'];
   g.dialogT = 6;
